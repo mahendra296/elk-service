@@ -1,0 +1,5 @@
+
+.idea/*
+department-service/target/*
+user-service/target/*
+common-service/target/*
