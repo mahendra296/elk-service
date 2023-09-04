@@ -10,6 +10,12 @@ import com.elk.repositories.UserRepository;
 import com.elk.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.slf4j.MDC;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
@@ -26,6 +32,9 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final RestTemplate restTemplate;
+
+    @Value("${department.url}")
+    String departmentUrl;
 
     @Override
     public UserDTO addUser(UserDTO userDTO) {
@@ -77,9 +86,15 @@ public class UserServiceImpl implements UserService {
         if (user == null) {
             throw new ResourceNotFoundException("User not found by userId : " + userId);
         }
-        DepartmentDTO departmentDTO = restTemplate.getForObject("http://localhost:8081/api/v1/department/" + user.getDepartmentId(), DepartmentDTO.class);
+        String url = departmentUrl+"/api/v1/department/" + user.getDepartmentId();
+        log.info("Department url : {}", url);
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("eventTraceId", MDC.get("eventTraceId"));
+        HttpEntity<Void> requestEntity = new HttpEntity<>(headers);
+
+        ResponseEntity<DepartmentDTO> departmentDTO = restTemplate.exchange(url, HttpMethod.GET, requestEntity, DepartmentDTO.class);
         UserDTO userDTO = UserDTO.buildDTO(user);
-        userDTO.setDepartment(departmentDTO);
+        userDTO.setDepartment(departmentDTO.getBody());
         log.info("End getUserById method.");
         return userDTO;
     }
