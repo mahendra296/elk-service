@@ -251,226 +251,298 @@ The ELK (Elasticsearch, Logstash, Kibana) stack can be used to centralize and vi
             └─────────────────┘
 ```
 
-### Elasticsearch Configuration
+---
 
-Create `elasticsearch/elasticsearch.yml`:
-```yaml
-cluster.name: elk-service-cluster
-node.name: elk-node-1
-network.host: 0.0.0.0
-http.port: 9200
-discovery.type: single-node
-xpack.security.enabled: false
+## Option 1: Local Windows Setup
 
-# Index settings
-indices.query.bool.max_clause_count: 4096
+### Prerequisites
 
-# Path settings
-path.data: /usr/share/elasticsearch/data
-path.logs: /usr/share/elasticsearch/logs
+Download the following from Elastic's official website:
+- **Elasticsearch**: https://www.elastic.co/downloads/elasticsearch
+- **Kibana**: https://www.elastic.co/downloads/kibana
+- **Logstash**: https://www.elastic.co/downloads/logstash
+
+Extract all zip files to `D:/elastic/` folder and rename the extracted folders to `elasticsearch`, `kibana`, and `logstash`.
+
+### Step 1: Configure and Run Elasticsearch
+
+1. Navigate to `D:/elastic/elasticsearch/bin` and run:
+   ```cmd
+   elasticsearch.bat
+   ```
+
+2. Save the credential details (elastic user password and kibana auth token) from the logs.
+
+3. Disable security for local development. Edit `D:\elastic\elasticsearch\config\elasticsearch.yml`:
+   ```yaml
+   action.auto_create_index: .monitoring*,.watches,.triggered_watches,.watcher-history*,.ml*
+
+   xpack.security.http.ssl:
+     enabled: false
+
+   xpack.security.transport.ssl:
+     enabled: false
+   ```
+
+4. Restart Elasticsearch. It will now run on http://localhost:9200/
+
+### Step 2: Configure and Run Kibana
+
+1. Edit `D:\elastic\kibana\config\kibana.yml` and uncomment/update:
+   ```yaml
+   elasticsearch.hosts: ["http://localhost:9200"]
+   elasticsearch.username: "kibana_system"
+   elasticsearch.password: "your_password"
+   ```
+
+2. Navigate to `D:\elastic\kibana\bin` and run:
+   ```cmd
+   kibana.bat
+   ```
+
+3. Access Kibana UI at http://localhost:5601/ and login with elastic user credentials.
+
+4. Go to **Dev Tools** and enable auto_create_index:
+   ```
+   PUT _cluster/settings
+   {
+     "persistent": {
+       "action.auto_create_index": "true"
+     }
+   }
+   ```
+
+### Step 3: Configure and Run Logstash
+
+1. Create `logstash.conf` file in `D:\elastic\logstash\config`:
+   ```conf
+   input {
+     file {
+       type => "department-service"
+       path => "c:/logs/department_service.log"
+       start_position => "beginning"
+     }
+     file {
+       type => "user-service"
+       path => "c:/logs/user_service.log"
+       start_position => "beginning"
+     }
+   }
+
+   output {
+     elasticsearch {
+       hosts => ["http://localhost:9200"]
+       index => "elk-service-logs"
+       user => "elastic"
+       password => "your_password"
+     }
+     stdout { codec => rubydebug }
+   }
+   ```
+
+2. Navigate to `D:\elastic\logstash\bin` and run:
+   ```cmd
+   logstash.bat -f ../config/logstash.conf
+   ```
+
+### Step 4: Create Data View in Kibana
+
+1. Open Kibana at http://localhost:5601
+2. Go to **Discover** menu
+3. Create a new **Data View** with pattern: `elk-service-logs*`
+4. View and filter logs as needed
+
+### Useful Elasticsearch Commands
+
+```cmd
+# Generate new enrollment token
+D:\elastic\elasticsearch\bin\elasticsearch-create-enrollment-token -s node
+
+# Reset password for users (elastic, kibana, kibana_system)
+D:\elastic\elasticsearch\bin\elasticsearch-reset-password -u {user}
 ```
 
-### Logstash Configuration
+---
 
-Create `logstash/logstash.conf`:
-```conf
-input {
-  file {
-    path => "/var/logs/user_service.log"
-    start_position => "beginning"
-    sincedb_path => "/dev/null"
-    type => "user-service"
-    codec => plain { charset => "UTF-8" }
-  }
-  file {
-    path => "/var/logs/department_service.log"
-    start_position => "beginning"
-    sincedb_path => "/dev/null"
-    type => "department-service"
-    codec => plain { charset => "UTF-8" }
-  }
-}
+## Option 2: Docker Setup (Windows)
 
-filter {
-  grok {
-    match => {
-      "message" => "\[%{TIMESTAMP_ISO8601:timestamp}\] \[%{LOGLEVEL:level}\] \[%{DATA:eventTraceId}\]: %{DATA:class}: %{GREEDYDATA:log_message}"
-    }
-  }
-  date {
-    match => ["timestamp", "yyyy-MM-dd HH:mm:ss.SSS"]
-    target => "@timestamp"
-  }
-  mutate {
-    remove_field => ["timestamp"]
-  }
-}
+### Prerequisites
 
-output {
-  elasticsearch {
-    hosts => ["elasticsearch:9200"]
-    index => "elk-service-logs-%{+YYYY.MM.dd}"
-  }
-  stdout { codec => rubydebug }
-}
-```
+1. Install Docker Desktop for Windows: https://docs.docker.com/desktop/install/windows-install/
 
-Create `logstash/pipelines.yml`:
-```yaml
-- pipeline.id: elk-service
-  path.config: "/usr/share/logstash/pipeline/logstash.conf"
-```
+2. Set max_map_count in WSL (required for Elasticsearch):
+   ```powershell
+   wsl -d docker-desktop
+   sysctl -w vm.max_map_count=262144
+   ```
 
-### Kibana Configuration
-
-Create `kibana/kibana.yml`:
-```yaml
-server.name: kibana
-server.host: "0.0.0.0"
-server.port: 5601
-elasticsearch.hosts: ["http://elasticsearch:9200"]
-
-# Logging
-logging.dest: stdout
-logging.verbose: false
-
-# Index pattern
-xpack.monitoring.ui.container.elasticsearch.enabled: true
-```
-
-### Docker Compose for ELK Stack
-
-Create `docker-compose.yml`:
-```yaml
-version: '3.8'
-
-services:
-  # MySQL Database
-  mysql:
-    image: mysql:8.0
-    container_name: mysql
-    environment:
-      MYSQL_ROOT_PASSWORD: root
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    networks:
-      - elk-network
-
-  # Elasticsearch
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
-    container_name: elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
-    ports:
-      - "9200:9200"
-      - "9300:9300"
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-      - ./elasticsearch/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml
-    networks:
-      - elk-network
-
-  # Logstash
-  logstash:
-    image: docker.elastic.co/logstash/logstash:8.11.0
-    container_name: logstash
-    ports:
-      - "5044:5044"
-      - "9600:9600"
-    volumes:
-      - ./logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf
-      - ./logstash/pipelines.yml:/usr/share/logstash/config/pipelines.yml
-      - logs_volume:/var/logs
-    depends_on:
-      - elasticsearch
-    networks:
-      - elk-network
-
-  # Kibana
-  kibana:
-    image: docker.elastic.co/kibana/kibana:8.11.0
-    container_name: kibana
-    ports:
-      - "5601:5601"
-    volumes:
-      - ./kibana/kibana.yml:/usr/share/kibana/config/kibana.yml
-    depends_on:
-      - elasticsearch
-    networks:
-      - elk-network
-
-  # Department Service
-  department-service:
-    build: ./department-service
-    container_name: department-service
-    ports:
-      - "8081:8081"
-    environment:
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_DATABASE=departmentdb
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=root
-    volumes:
-      - logs_volume:/var/logs
-    depends_on:
-      - mysql
-    networks:
-      - elk-network
-
-  # User Service
-  user-service:
-    build: ./user-service
-    container_name: user-service
-    ports:
-      - "8080:8080"
-    environment:
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_DATABASE=userdb
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=root
-      - DEPARTMENT_URL=http://department-service:8081
-    volumes:
-      - logs_volume:/var/logs
-    depends_on:
-      - mysql
-      - department-service
-    networks:
-      - elk-network
-
-networks:
-  elk-network:
-    driver: bridge
-
-volumes:
-  mysql_data:
-  elasticsearch_data:
-  logs_volume:
-```
-
-### Running the Full Stack
+### Step 1: Create Docker Network and Volume
 
 ```bash
-# Start all services
-docker-compose up -d
+# Create network for services
+docker network create spring-net
 
-# Check service status
-docker-compose ps
+# Create network for ELK stack
+docker network create elastic
 
-# View logs
-docker-compose logs -f
-
-# Stop all services
-docker-compose down
+# Create volume for sharing logs between containers
+docker volume create log
 ```
 
-### Accessing Services
+### Step 2: Run MySQL
+
+```bash
+# Pull MySQL image
+docker pull mysql:8.0.26
+
+# Run MySQL container
+docker run --name mysql -d -p 3307:3306 \
+  -e MYSQL_ROOT_USER=root \
+  -e MYSQL_ROOT_PASSWORD=root \
+  mysql:8.0.26
+
+# Connect MySQL to spring-net network
+docker network connect spring-net mysql
+```
+
+### Step 3: Build and Run Microservices
+
+```bash
+# Build user-service image
+cd D:\Projects\Test\Code\elk-service\user-service
+docker build -t user_service .
+
+# Build department-service image
+cd D:\Projects\Test\Code\elk-service\department-service
+docker build -t department_service .
+
+# Run user-service container
+docker run --name user_container \
+  -e MYSQL_HOST=mysql \
+  -v log:/var/logs \
+  --net spring-net \
+  -d -p 8080:8080 \
+  user_service
+
+# Run department-service container
+docker run --name department_container \
+  -e MYSQL_HOST=mysql \
+  -v log:/var/logs \
+  --net spring-net \
+  -d -p 8081:8081 \
+  department_service
+```
+
+### Step 4: Pull and Run ELK Stack Images
+
+```bash
+# Pull ELK images
+docker pull docker.elastic.co/elasticsearch/elasticsearch:8.9.1
+docker pull docker.elastic.co/kibana/kibana:8.9.1
+docker pull docker.elastic.co/logstash/logstash:8.9.1
+
+# Run Elasticsearch
+docker run --name elasticsearch --net elastic \
+  -d -p 9200:9200 -p 9300:9300 \
+  -e discovery.type=single-node \
+  -e xpack.security.enabled=false \
+  -e xpack.security.enrollment.enabled=false \
+  -it docker.elastic.co/elasticsearch/elasticsearch:8.9.1
+
+# Run Kibana
+docker run --name kibana --net elastic \
+  -d -p 5601:5601 \
+  docker.elastic.co/kibana/kibana:8.9.1
+```
+
+### Step 5: Configure and Run Logstash
+
+1. Create `logstash.conf` in `D:/docker/`:
+   ```conf
+   input {
+     file {
+       type => "department-service"
+       path => "/var/logs/department_service.log"
+       start_position => "beginning"
+     }
+     file {
+       type => "user-service"
+       path => "/var/logs/user_service.log"
+       start_position => "beginning"
+     }
+   }
+
+   output {
+     elasticsearch {
+       hosts => ["http://elasticsearch:9200"]
+       index => "elk-service-logs"
+     }
+     stdout { codec => rubydebug }
+   }
+   ```
+
+2. Run Logstash:
+   ```bash
+   docker run --name logstash \
+     --link elasticsearch \
+     --net elastic \
+     -v log:/var/logs/ \
+     -d -it \
+     -v D:/docker/:/usr/share/logstash/pipeline/ \
+     docker.elastic.co/logstash/logstash:8.9.1
+   ```
+
+### Step 6: Setup Kibana
+
+1. Open Kibana at http://localhost:5601
+2. Go to **Dev Tools** and enable auto_create_index
+3. Go to **Discover** → Create **Data View** with pattern `elk-service-logs*`
+4. View and filter logs
+
+### Useful Docker Commands for ELK Security
+
+```bash
+# Reset kibana_system password
+docker exec -it elasticsearch /usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system
+
+# Reset elastic user password
+docker exec -it elasticsearch /usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic
+
+# Generate Kibana enrollment token
+docker exec -it elasticsearch /usr/share/elasticsearch/bin/elasticsearch-create-enrollment-token -s kibana
+```
+
+---
+
+## Docker Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `docker build -t {imagename} .` | Build image from Dockerfile |
+| `docker build -f {dockerfile path}` | Build with specific Dockerfile |
+| `docker images` | List all images |
+| `docker rmi {imageId}` | Remove image |
+| `docker run -d {image} -p {port}:{Cport}` | Run container in background |
+| `docker ps` | List running containers |
+| `docker ps -a` | List all containers |
+| `docker start {container}` | Start existing container |
+| `docker stop {container}` | Stop running container |
+| `docker kill {container}` | Kill running container |
+| `docker rm {containerId}` | Remove container |
+| `docker rm -f {containerId}` | Force remove container |
+| `docker exec -it {containerId} bash` | Enter container shell |
+| `docker network ls` | List networks |
+| `docker network create {name}` | Create network |
+| `docker network rm {name}` | Remove network |
+| `docker volume ls` | List volumes |
+| `docker volume create {name}` | Create volume |
+| `docker volume rm {name}` | Remove volume |
+| `docker container prune` | Remove all stopped containers |
+| `docker rename {old} {new}` | Rename container |
+
+---
+
+## Accessing Services
 
 | Service | URL |
 |---------|-----|
@@ -478,17 +550,3 @@ docker-compose down
 | Department Service API | http://localhost:8081/api/v1/department |
 | Elasticsearch | http://localhost:9200 |
 | Kibana Dashboard | http://localhost:5601 |
-| Logstash Metrics | http://localhost:9600 |
-
-### Kibana Setup
-
-1. Open Kibana at http://localhost:5601
-2. Go to **Management** → **Stack Management** → **Kibana** → **Data Views**
-3. Create a new data view with pattern: `elk-service-logs-*`
-4. Select `@timestamp` as the time field
-5. Go to **Analytics** → **Discover** to view logs
-6. Create dashboards to visualize:
-   - Log volume over time
-   - Error rate by service
-   - Request tracing by eventTraceId
-   - Log level distribution
